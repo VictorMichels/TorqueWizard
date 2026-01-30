@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
+from starlette.formparsers import MultiPartParser
+from serial.tools import list_ports
+from nicegui import app, run, ui
+from collections import deque
 import serial
 import time
 import math
-from serial.tools import list_ports
-from starlette.formparsers import MultiPartParser
-from nicegui import app, run, ui
 import logging
 import asyncio
 import random
@@ -13,7 +14,11 @@ import pandas as pd
 import io
 
 
-
+#Play Data Storage
+MAX_DISPLAY = 100
+x_display = deque(maxlen=MAX_DISPLAY)
+y_display = deque(maxlen=MAX_DISPLAY)
+all_data = []
 
 #View Settings
 MultiPartParser.spool_max_size = 1024 * 1024 * 5 # 5 MB limit
@@ -39,10 +44,31 @@ rainbow_colors = ['text-red-500', 'text-orange-500', 'text-yellow-500', 'text-gr
 decoded_line= "404"
 serial_num=0
 
+#String to Integer
+def extract_int(s):
+    # This filters the string to keep only digits and the minus sign
+    digits = ''.join([c for c in s if c == '-' or c.isdigit()])
+    if not digits:
+        return None # Return None if no numbers found
+    try:
+        return int(digits)
+    except ValueError:
+        return None
+
 #View Graph Plotly Setup
-fig = go.Figure()
-fig.update_layout(
+view_fig = go.Figure()
+view_fig.update_layout(
     title="Data Analysis",
+    template="plotly_white",
+    margin=dict(l=50, r=20, t=50, b=50),
+    xaxis=dict(title="Time [s]"),
+    yaxis=dict(title="Force [N]")
+)
+
+#Play Graph Plotly Setup
+play_fig = go.Figure(data=[go.Scatter(x=[], y=[], mode='lines')])
+play_fig.update_layout(
+    title="Play Analysis",
     template="plotly_white",
     margin=dict(l=50, r=20, t=50, b=50),
     xaxis=dict(title="Time [s]"),
@@ -52,16 +78,6 @@ fig.update_layout(
 #One function to rule them all
 async def all_update():
     #if tabs.value == '1':
-    #        now = time.time()
-    #        data = chart.options['series'][0]['data']
-    #        base = math.sin(now*20)
-    #        harmonic = 0.5 * math.sin(3*now)
-    #        noise = random.uniform(-0.1, 0.1)
-    #        data.append([now * 100, base+harmonic+noise])
-    #        
-    #        if len(data) > 50:
-    #            data.pop(0)            
-    #        chart.update()
     if ser and ser.is_open:
         # read_all() gets whatever is in the buffer right now without waiting for a newline character
         data = await run.io_bound(ser.read_all) 
@@ -71,8 +87,18 @@ async def all_update():
             #'replace' turns them into the diamond question mark symbol
             decoded_line = data.decode('utf-8', errors='backslashreplace').strip()
             if decoded_line:
-                serial_num=get_int = lambda s: int(''.join([c for c in s if c == '-' or c.isdigit()]))
-                #^ This one-liner ignores floats
+                serial_num=extract_int(decoded_line)
+                if serial_num is not None:
+                    current_time = time.time()
+                    all_data.append((current_time, serial_num))
+                    # Update sliding window
+                    x_display.append(current_time)
+                    y_display.append(serial_num)
+                    # We update the trace data directly without recreating the whole layout
+                    #play_plot.options['data'][0]['x'] = list(x_display)
+                    #play_plot.options['data'][0]['y'] = list(y_display)
+                    play_plot.update()
+
                 with log_container:
                     ui.label(decoded_line).classes('font-mono leading-none p-0 m-0')
 
@@ -146,10 +172,10 @@ async def handle_upload(e):
         time = [i * PERIOD for i in range(len(force))]
 
         # D. Update Graph
-        fig.data = []
-        fig.add_trace(go.Scatter(x=time, y=force, mode='lines', name='Force'))
-        fig.update_layout(title=f"File: {filename} ({len(force)} samples)")
-        plot.update()
+        view_fig.data = []
+        view_fig.add_trace(go.Scatter(x=time, y=force, mode='lines', name='Force'))
+        view_fig.update_layout(title=f"File: {filename} ({len(force)} samples)")
+        view_plot.update()
         
         ui.notify(f"Loaded {filename} successfully!")
         
@@ -268,7 +294,8 @@ with ui.tab_panels(tabs, value='1').classes('w-full'):
     with ui.tab_panel('2'):
         ui.label('Play').classes('text-5xl font-bold text-center w-full')
         ui.label('MAKE SURE THAT THE SERIAL IS WORKING!').classes('text-xl font-bold text-center w-full text-red-600')
-        #ui.button('Record into CSV').classes('text-xl font-bold text-center w-full')
+        ui.button('Record into CSV').classes('text-xl font-bold text-center')
+        play_plot = ui.plotly(play_fig).classes('w-full h-100')
         #decoded_line
 
     with ui.tab_panel('3'):
@@ -276,7 +303,7 @@ with ui.tab_panels(tabs, value='1').classes('w-full'):
         ui.label('Read from CSV to get the full graph').classes('text-xl font-bold text-center w-full')
         with ui.card().classes('w-full p-4'):
             ui.upload(on_upload=handle_upload, auto_upload=True).classes('w-full mb-4')
-            plot = ui.plotly(fig).classes('w-full h-96')
+            view_plot = ui.plotly(view_fig).classes('w-full h-96')
 
     with ui.tab_panel('4'):
         ui.label('Calibrate WIP').classes('text-5xl font-bold text-center w-full')
@@ -336,8 +363,8 @@ with ui.tab_panels(tabs, value='1').classes('w-full'):
                 ui.label('idea:')
             ui.image('./plano.png').classes('w-full max-w-4xl h-auto mx-auto')
 
-
-ui.timer(0.01, all_update) #polling rate to run read_loop
+#1/80 = 0.0125
+ui.timer(0.0125, all_update) #polling rate to run read_loop
 
 ui.run(title="ToqueWizard")
 #if __name__ in {"__main__", "__mp_main__"}:
