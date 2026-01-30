@@ -1,0 +1,1 @@
+pip install qtpy pyqt6 pyserial nicegui PyQt6-WebEngine pandas plotly
