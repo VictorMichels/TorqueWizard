@@ -3,6 +3,7 @@ from starlette.formparsers import MultiPartParser
 from serial.tools import list_ports
 from nicegui import app, run, ui
 from collections import deque
+from datetime import datetime
 import serial
 import time
 import math
@@ -12,6 +13,8 @@ import random
 import plotly.graph_objects as go
 import pandas as pd
 import io
+import csv
+from io import StringIO
 
 
 #Play Data Storage
@@ -43,6 +46,8 @@ rainbow_colors = ['text-red-500', 'text-orange-500', 'text-yellow-500', 'text-gr
 #Serial Data Globals
 decoded_line= "404"
 serial_num=0
+last_plot_update = 0
+start_time = time.time()
 last_plot_update = 0
 
 #String to Integer
@@ -77,53 +82,48 @@ play_fig.update_layout(
 )
 
 #One function to rule them all
-# Add this global or static variable outside the function to throttle updates
-last_plot_update = 0
 
 async def all_update():
     global last_plot_update
     
-    #if tabs.value == '1':
     if ser and ser.is_open:
-        # read_all() gets whatever is in the buffer right now without waiting for a newline character
         data = await run.io_bound(ser.read_all) 
 
         if data:
-            #'backslashreplace' turns bad bytes into readable hex (e.g., \xff) 
-            raw_text = data.decode('utf-8', errors='backslashreplace')
-            
-            # --- 1. LOGGING (Do this first, on raw text) ---
-            # We use 'pre-wrap' so newlines from the Serial Monitor are respected
+            raw_text = data.decode('utf-8', errors='backslashreplace')#This backslashreplace is useful to show garbage data if wrong Baudrate is selected
             with log_container:
                 ui.label(raw_text).classes('font-mono leading-none p-0 m-0').style('white-space: pre-wrap')
-
             if auto_scroll.value:
                 log_container.scroll_to(percent=1.0)
 
-            # --- 2. PLOTTING (Do this on stripped text) ---
-            # We strip here locally just for the number parsing logic
             decoded_line = raw_text.strip()
-            
             if decoded_line:
                 serial_num = extract_int(decoded_line)
-                print(serial_num)
+                
                 if serial_num is not None:
-                    current_time = time.time()
-                    all_data.append((current_time, serial_num))
-                    
-                    # Update sliding window
-                    x_display.append(current_time)
-                    y_display.append(serial_num)
-                    
-                    # --- CRITICAL FIX: THROTTLE THE UPDATE ---
-                    # Only update the visual plot if 0.1s (100ms) has passed since the last update.
-                    # This captures all data in the background lists but prevents the GUI from freezing.
+                    #Calculate Relative Time here (so we're not stuck with billions os unix time) 
+                    relative_time = time.time() - start_time
+                    all_data.append((relative_time, serial_num))
+                    # Update sliding window with the relative time
+                    x_display.append(relative_time)
+                    y_display.append(serial_num)                    
                     if time.time() - last_plot_update > 0.1:
                         play_plot.figure.data[0].x = list(x_display)
                         play_plot.figure.data[0].y = list(y_display)
                         play_plot.update()
                         last_plot_update = time.time()
          
+def download_csv():
+    #memory buffer for the CSV
+    with StringIO() as buffer:
+        writer = csv.writer(buffer)
+        #Write the rows in the format: Index (starting at 1), Value
+        #Ignore the timestamp stored in all_data[i][0]
+        for i, (_, value) in enumerate(all_data, start=1):
+            writer.writerow([i, value])            
+        #Trigger the download in the browser
+        ui.download(buffer.getvalue().encode('utf-8'), 'play_analysis_data.csv')
+
 
 def get_ports():
     """Returns a list of available serial ports."""
@@ -168,25 +168,17 @@ def clear_log():
 #Importing CSV logic (magic)
 async def handle_upload(e):
     try:
-        # A. Get the file name from your working snippet
         filename = e.file.name
-        
-        # B. Read the content
         # We try to read it. If it returns a "coroutine", we await it.
         # This makes it work regardless of whether the file wrapper is sync or async.
         content = e.file.read()
         if hasattr(content, '__await__'):
             content = await content
-            
-        # C. Process Data
         # content is now 'bytes'. We feed it to pandas.
         # header=None is CRITICAL because your file has no column names.
         df = pd.read_csv(io.BytesIO(content), header=None)
-        
-        # Extract Force (2nd column)
-        # If your file has only 1 column, change this to: force = df.iloc[:, 0]
+        # Extract Force from the second column
         force = df.iloc[:, 1] 
-        
         # Create Time (Index * 1/80s)
         time = [i * PERIOD for i in range(len(force))]
 
@@ -313,7 +305,7 @@ with ui.tab_panels(tabs, value='1').classes('w-full'):
     with ui.tab_panel('2'):
         ui.label('Play').classes('text-5xl font-bold text-center w-full')
         ui.label('MAKE SURE THAT THE SERIAL IS WORKING!').classes('text-xl font-bold text-center w-full text-red-600')
-        ui.button('Record into CSV').classes('text-xl font-bold text-center')
+        ui.button('Record into CSV', on_click=download_csv, icon='save').classes('text-xl font-bold text-center')
         play_plot = ui.plotly(play_fig).classes('w-full h-100')
         #decoded_line
 
