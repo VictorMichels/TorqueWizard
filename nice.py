@@ -40,9 +40,10 @@ logging.getLogger('pywebview').setLevel(logging.CRITICAL)
 #Label Coloring
 rainbow_colors = ['text-red-500', 'text-orange-500', 'text-yellow-500', 'text-green-500', 'text-blue-500', 'text-indigo-500', 'text-purple-500']
 
-#Global string storing Serial data
+#Serial Data Globals
 decoded_line= "404"
 serial_num=0
+last_plot_update = 0
 
 #String to Integer
 def extract_int(s):
@@ -76,7 +77,12 @@ play_fig.update_layout(
 )
 
 #One function to rule them all
+# Add this global or static variable outside the function to throttle updates
+last_plot_update = 0
+
 async def all_update():
+    global last_plot_update
+    
     #if tabs.value == '1':
     if ser and ser.is_open:
         # read_all() gets whatever is in the buffer right now without waiting for a newline character
@@ -84,26 +90,39 @@ async def all_update():
 
         if data:
             #'backslashreplace' turns bad bytes into readable hex (e.g., \xff) 
-            #'replace' turns them into the diamond question mark symbol
-            decoded_line = data.decode('utf-8', errors='backslashreplace').strip()
+            raw_text = data.decode('utf-8', errors='backslashreplace')
+            
+            # --- 1. LOGGING (Do this first, on raw text) ---
+            # We use 'pre-wrap' so newlines from the Serial Monitor are respected
+            with log_container:
+                ui.label(raw_text).classes('font-mono leading-none p-0 m-0').style('white-space: pre-wrap')
+
+            if auto_scroll.value:
+                log_container.scroll_to(percent=1.0)
+
+            # --- 2. PLOTTING (Do this on stripped text) ---
+            # We strip here locally just for the number parsing logic
+            decoded_line = raw_text.strip()
+            
             if decoded_line:
-                serial_num=extract_int(decoded_line)
+                serial_num = extract_int(decoded_line)
+                print(serial_num)
                 if serial_num is not None:
                     current_time = time.time()
                     all_data.append((current_time, serial_num))
+                    
                     # Update sliding window
                     x_display.append(current_time)
                     y_display.append(serial_num)
-                    # We update the trace data directly without recreating the whole layout
-                    #play_plot.options['data'][0]['x'] = list(x_display)
-                    #play_plot.options['data'][0]['y'] = list(y_display)
-                    play_plot.update()
-
-                with log_container:
-                    ui.label(decoded_line).classes('font-mono leading-none p-0 m-0')
-
-                if auto_scroll.value:
-                    log_container.scroll_to(percent=1.0)
+                    
+                    # --- CRITICAL FIX: THROTTLE THE UPDATE ---
+                    # Only update the visual plot if 0.1s (100ms) has passed since the last update.
+                    # This captures all data in the background lists but prevents the GUI from freezing.
+                    if time.time() - last_plot_update > 0.1:
+                        play_plot.figure.data[0].x = list(x_display)
+                        play_plot.figure.data[0].y = list(y_display)
+                        play_plot.update()
+                        last_plot_update = time.time()
          
 
 def get_ports():
