@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import webview
 from starlette.formparsers import MultiPartParser
 from serial.tools import list_ports
 from nicegui import app, run, ui
@@ -16,7 +17,6 @@ import io
 import csv
 from io import StringIO
 
-
 #Play Data Storage
 MAX_DISPLAY = 100
 x_display = deque(maxlen=MAX_DISPLAY)
@@ -28,16 +28,16 @@ MultiPartParser.spool_max_size = 1024 * 1024 * 5 # 5 MB limit
 SAMPLING_RATE = 80.0
 PERIOD = 1.0 / SAMPLING_RATE
 
-#DEBUG BORDERS
-ui.add_head_html('''
-<style>
-    * {
-        border: 1px solid rgba(255, 0, 0, 0.3) !important;
-    }
-</style>
-''')
+##DEBUG BORDERS
+#ui.add_head_html('''
+#<style>
+#    * {
+#        border: 1px solid rgba(255, 0, 0, 0.3) !important;
+#    }
+#</style>
+#''')
 
-# Set the logger for pywebview to only show 'Critical' errors, hiding the warning/info noise
+#Set the logger for pywebview to only show 'Critical' errors, hiding the warning/info noise
 logging.getLogger('pywebview').setLevel(logging.CRITICAL)
 
 #Label Coloring
@@ -52,10 +52,10 @@ last_plot_update = 0
 
 #String to Integer
 def extract_int(s):
-    # This filters the string to keep only digits and the minus sign
+    #This filters the string to keep only digits and the minus sign
     digits = ''.join([c for c in s if c == '-' or c.isdigit()])
     if not digits:
-        return None # Return None if no numbers found
+        return None #Return None if no numbers found
     try:
         return int(digits)
     except ValueError:
@@ -104,26 +104,56 @@ async def all_update():
                     #Calculate Relative Time here (so we're not stuck with billions os unix time) 
                     relative_time = time.time() - start_time
                     all_data.append((relative_time, serial_num))
-                    # Update sliding window with the relative time
+                    #Update sliding window with the relative time
                     x_display.append(relative_time)
                     y_display.append(serial_num)                    
                     if time.time() - last_plot_update > 0.1:
-                        play_plot.figure.data[0].x = list(x_display)
-                        play_plot.figure.data[0].y = list(y_display)
-                        play_plot.update()
-                        last_plot_update = time.time()
-         
-def download_csv():
-    #memory buffer for the CSV
+                        if str(tabs.value) == '2':  
+                            play_plot.figure.data[0].x = list(x_display)
+                            play_plot.figure.data[0].y = list(y_display)
+                            play_plot.update()
+                            last_plot_update = time.time()
+#Web Browser version        
+#def download_csv():
+#    #memory buffer for the CSV
+#    with StringIO() as buffer:
+#        writer = csv.writer(buffer)
+#        #Write the rows in the format: Index (starting at 1), Value
+#        #Ignore the timestamp stored in all_data[i][0]
+#        for i, (_, value) in enumerate(all_data, start=1):
+#            writer.writerow([i, value])            
+#        #Trigger the download in the browser
+#        ui.download(buffer.getvalue().encode('utf-8'), 'play_analysis_data.csv')
+
+async def download_csv():
+    #Generate CSV
     with StringIO() as buffer:
         writer = csv.writer(buffer)
-        #Write the rows in the format: Index (starting at 1), Value
-        #Ignore the timestamp stored in all_data[i][0]
         for i, (_, value) in enumerate(all_data, start=1):
-            writer.writerow([i, value])            
-        #Trigger the download in the browser
-        ui.download(buffer.getvalue().encode('utf-8'), 'play_analysis_data.csv')
+            writer.writerow([i, value])
+        csv_content = buffer.getvalue()
 
+    #Check if we are running in Native Mode (Standalone Desktop App) ((ie pyqt6))
+    if app.native.main_window:
+        #create_file_dialog returns a tuple/list of strings, or None if cancelled
+        file_selection = await app.native.main_window.create_file_dialog(
+            dialog_type=30, 
+            directory='/', 
+            save_filename='play_analysis_data.csv'
+        )
+        #If user selected
+        if file_selection:
+            destination_path = file_selection[0] if isinstance(file_selection, (list, tuple)) else file_selection
+            try:
+                with open(destination_path, 'w', encoding='utf-8') as f:
+                    f.write(csv_content)
+                ui.notify(f'Saved to {destination_path}', type='positive')
+            except Exception as e:
+                ui.notify(f'Error saving file: {e}', type='negative')
+                
+    #Fallback to Web Browser
+    else:
+        ui.download(csv_content.encode('utf-8'), 'play_analysis_data.csv')
 
 def get_ports():
     """Returns a list of available serial ports."""
@@ -132,9 +162,9 @@ def get_ports():
 def toggle_connection():
     global ser
     if connection_switch.value:
-        # User wants to CONNECT
+        #User wants to CONNECT
         try:
-            # Open the serial port with the selected options
+            #Open the serial port with the selected options
             ser = serial.Serial(port_select.value, baudrate=baud_selecter.value, timeout=0.1)
             ui.notify(f'Connected to {port_select.value}', type='positive')        
 
@@ -142,7 +172,7 @@ def toggle_connection():
             ui.notify(f'Could not connect: {e}', type='negative')
             connection_switch.value = False # Reset switch
     else:
-        # User wants to DISCONNECT
+        #User wants to DISCONNECT
         if ser:
             ser.close()
             ser = None
@@ -150,7 +180,7 @@ def toggle_connection():
 
 def send_command():
     if ser and ser.is_open:
-        # Encode string to bytes before sending
+        #Encode string to bytes before sending
         cmd = f'{command_input.value}\n'.encode()
         ser.write(cmd)
         command_input.value = ''
@@ -169,20 +199,20 @@ def clear_log():
 async def handle_upload(e):
     try:
         filename = e.file.name
-        # We try to read it. If it returns a "coroutine", we await it.
-        # This makes it work regardless of whether the file wrapper is sync or async.
+        #We try to read it. If it returns a "coroutine", we await it.
+        #This makes it work regardless of whether the file wrapper is sync or async.
         content = e.file.read()
         if hasattr(content, '__await__'):
             content = await content
-        # content is now 'bytes'. We feed it to pandas.
-        # header=None is CRITICAL because your file has no column names.
+        #content is now 'bytes'. We feed it to pandas.
+        #header=None is CRITICAL because your file has no column names.
         df = pd.read_csv(io.BytesIO(content), header=None)
-        # Extract Force from the second column
+        #Extract Force from the second column
         force = df.iloc[:, 1] 
-        # Create Time (Index * 1/80s)
+        #Create Time (Index * 1/80s)
         time = [i * PERIOD for i in range(len(force))]
 
-        # D. Update Graph
+        #D. Update Graph
         view_fig.data = []
         view_fig.add_trace(go.Scatter(x=time, y=force, mode='lines', name='Force'))
         view_fig.update_layout(title=f"File: {filename} ({len(force)} samples)")
@@ -196,26 +226,26 @@ async def handle_upload(e):
 #MENU
 with ui.dialog() as dialog3, ui.card():
 
-    # Main title
+    #Main title
     with ui.row().classes('w-full justify-center mb-2'):
         ui.label('Tutorial').classes('text-4xl font-bold')
     ui.separator().classes('mb-4')
 
-    # Main Menu
+    #Main Menu
     with ui.card().tight().classes('w-full hover:shadow-lg transition-shadow duration-300'):
         with ui.card_section():
             ui.label('Main Menu').classes('text-2xl font-bold text-blue-600 mb-2')
             ui.label('This page is your starting point, it introduces the software and lets you navigate to all its key features.')\
                 .classes('text-lg text-gray-700 leading-relaxed')
 
-    # Play
+    #Play
     with ui.card().tight().classes('w-full hover:shadow-lg transition-shadow duration-300'):
         with ui.card_section():
             ui.label('Play').classes('text-2xl font-bold text-green-600 mb-2')
             ui.label('This is where you can record and export into a .csv the graph traced by all the Force vectors over time.')\
                 .classes('text-lg text-gray-700 leading-relaxed')
 
-    # View
+    #View
     with ui.card().tight().classes('w-full hover:shadow-lg transition-shadow duration-300'):
         with ui.card_section():
             ui.label('View').classes('text-2xl font-bold text-purple-600 mb-2')
@@ -225,21 +255,21 @@ with ui.dialog() as dialog3, ui.card():
             ui.label(' the whole graph that you recorded previously by importing a .csv.')\
                 .classes('text-lg text-gray-700 leading-relaxed inline')
 
-    # Calibration
+    #Calibration
     with ui.card().tight().classes('w-full hover:shadow-lg transition-shadow duration-300'):
         with ui.card_section():
             ui.label('Calibrate').classes('text-2xl font-bold text-orange-600 mb-2')
             ui.label('Set different weights as calibration, by default it\'s set to 500 grams.')\
                 .classes('text-lg text-gray-700 leading-relaxed')
 
-    # Serial Monitor
+    #Serial Monitor
     with ui.card().tight().classes('w-full hover:shadow-lg transition-shadow duration-300'):
         with ui.card_section():
             ui.label('Serial Monitor').classes('text-2xl font-bold text-red-600 mb-2')
             ui.label('Essentially a debugger for your serial connection, this should be your first step to use this software.')\
                 .classes('text-lg text-gray-700 leading-relaxed')
 
-    # Credits
+    #Credits
     with ui.card().tight().classes('w-full hover:shadow-lg transition-shadow duration-300'):
         with ui.card_section():
             ui.label('Credits').classes('text-2xl font-bold text-indigo-600 mb-2')
@@ -306,7 +336,7 @@ with ui.tab_panels(tabs, value='1').classes('w-full'):
         ui.label('Play').classes('text-5xl font-bold text-center w-full')
         ui.label('MAKE SURE THAT THE SERIAL IS WORKING!').classes('text-xl font-bold text-center w-full text-red-600')
         ui.button('Record into CSV', on_click=download_csv, icon='save').classes('text-xl font-bold text-center')
-        play_plot = ui.plotly(play_fig).classes('w-full h-100')
+        play_plot = ui.plotly(play_fig).classes('w-full h-[60vh]')
         #decoded_line
 
     with ui.tab_panel('3'):
@@ -358,9 +388,9 @@ with ui.tab_panels(tabs, value='1').classes('w-full'):
             ui.button('Close', on_click=dialog1.close)
         with ui.dialog().classes('w-screen h-screen bg-black/90') as dialog2, \
              ui.card().classes('w-full h-full bg-transparent border-none shadow-none p-4'):
-            # Close button
+            #Close button
             ui.button(icon='close', on_click=dialog2.close)
-            # Image container
+            #Image container
             with ui.column().classes('w-full h-full items-center justify-center'):
                 ui.image('./aero.jpeg').classes('max-h-[85vh] max-w-[90vw] object-contain')
 
@@ -377,11 +407,13 @@ with ui.tab_panels(tabs, value='1').classes('w-full'):
 #1/80 = 0.0125
 ui.timer(0.0125, all_update) #polling rate to run read_loop
 
-ui.run(title="ToqueWizard")
-#if __name__ in {"__main__", "__mp_main__"}:
-#    ui.run(
-#        native=True, 
-#        window_size=(800, 600), 
-#        title="oqueWizard",
-#        reload=False
-#    )ui.run()
+#ui.run(title="ToqueWizard")
+
+if __name__ in {"__main__", "__mp_main__"}:
+    app.native.window_args['maximized'] = True
+    ui.run(
+        native=True, 
+        window_size=(1280, 1024), 
+        title="ToqueWizard",
+        reload=False
+    )
