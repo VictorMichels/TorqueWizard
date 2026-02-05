@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="torquewizard.png" alt="TorqueWizard Logo" width="128" height="128">
+  <img src="torquewizard.png" alt="TorqueWizard Logo" width="256" height="256">
 
   <h1>TorqueWizard ✈️</h1>
 
