@@ -1,13 +1,12 @@
 <div align="center">
   <img src="assets/no_background1.png" alt="TorqueWizard Logo" width="256" height="256">
-  <hr style="width: 50%; margin: 20px auto;">
+
   <h1>TorqueWizard ✈️</h1>
-  
+
   <p>
     <strong>A Serial Dashboard Designed for Propeller Traction Telemetry</strong>
   </p>
-  
-  <!-- Moved these links INSIDE the centered div -->
+
   <p>
     <a href="https://nicegui.io/">
       <img src="https://img.shields.io/badge/GUI-NiceGUI-orange?style=flat-square" alt="NiceGUI">
@@ -22,9 +21,10 @@
 </div>
 
 <br>
+
 ## 📖 About
 
-This application was built to solve a specific problem: visualizing the raw data coming from a load cell during propeller thrust tests. Instead of reading raw text from a serial monitor, TorqueWizard instantly plots the data, allowing you to see, export and import thrust curves in real-time.
+This application was built to solve a specific problem: visualizing the raw data coming from a load cell during propeller thrust tests. Instead of reading raw text from a serial monitor, TorqueWizard instantly plots the data, allowing you to see thrust curves in real-time.
 
 
 
@@ -57,6 +57,6 @@ A fully functional serial debugger is built-in.
 
 ##  How to Run
 
-### 🐧 Option 1: Download from Releases the Linux Standalone App (.AppImage)
-### 🪟 Option 2: Download from Releases the Windows Executable (.exe)
+### 🐧 Option 1: Download the Linux Standalone App (.AppImage)
+### 🪟 Option 2: Download the Windows executable (.exe)
 ### 🖥️ Option 3: Just run nice.py yourself
