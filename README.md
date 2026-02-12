@@ -1,13 +1,13 @@
 <div align="center">
   <img src="assets/no_background1.png" alt="TorqueWizard Logo" width="256" height="256">
-  <div style="width: 80px; height: 3px; background: linear-gradient(90deg, transparent, #007bff, transparent); margin: 20px auto;"></div>
+  <hr style="width: 50%; margin: 20px auto;">
   <h1>TorqueWizard ✈️</h1>
   
   <p>
     <strong>A Serial Dashboard Designed for Propeller Traction Telemetry</strong>
   </p>
-</div>
-
+  
+  <!-- Moved these links INSIDE the centered div -->
   <p>
     <a href="https://nicegui.io/">
       <img src="https://img.shields.io/badge/GUI-NiceGUI-orange?style=flat-square" alt="NiceGUI">
