@@ -22,7 +22,6 @@
 </div>
 
 <br>
-
 ## 📖 About
 
 This application was built to solve a specific problem: visualizing the raw data coming from a load cell during propeller thrust tests. Instead of reading raw text from a serial monitor, TorqueWizard instantly plots the data, allowing you to see, export and import thrust curves in real-time.
