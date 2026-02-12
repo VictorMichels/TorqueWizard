@@ -1,6 +1,6 @@
 <div align="center">
   <img src="assets/no_background1.png" alt="TorqueWizard Logo" width="256" height="256">
-
+---
   <h1>TorqueWizard ✈️</h1>
 
   <p>
@@ -24,7 +24,7 @@
 
 ## 📖 About
 
-This application was built to solve a specific problem: visualizing the raw data coming from a load cell during propeller thrust tests. Instead of reading raw text from a serial monitor, TorqueWizard instantly plots the data, allowing engineers to see thrust curves in real-time.
+This application was built to solve a specific problem: visualizing the raw data coming from a load cell during propeller thrust tests. Instead of reading raw text from a serial monitor, TorqueWizard instantly plots the data, allowing you to see, export and import thrust curves in real-time.
 
 
 
