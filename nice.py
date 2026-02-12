@@ -16,6 +16,7 @@ import pandas as pd
 import io
 import csv
 from io import StringIO
+import multiprocessing
 
 #Play Data Storage
 MAX_DISPLAY = 100
@@ -438,10 +439,14 @@ async def start_loops():
 ui.timer(0, start_loops, once=True)
 
 if __name__ in {"__main__", "__mp_main__"}:
+    #Prevent the executable from recursively trying to parse itself
+    multiprocessing.freeze_support()
+    # Native Window Settings
     app.native.window_args['maximized'] = True
     ui.run(
         native=True, 
         window_size=(1280, 1024), 
-        title="ToqueWizard",
-        reload=False
+        title="TorqueWizard",
+        reload=False, # Ensure this is False for compiled apps
+        port=native_mode.find_open_port() if hasattr(app, 'native_mode') else 8000 # Optional safety
     )
