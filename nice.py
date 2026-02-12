@@ -24,9 +24,12 @@ y_display = deque(maxlen=MAX_DISPLAY)
 all_data = []
 
 #View Settings
-MultiPartParser.spool_max_size = 1024 * 1024 * 5 # 5 MB limit
+MultiPartParser.spool_max_size = 1024 * 1024 * 50 # 50 MB limit
 SAMPLING_RATE = 80.0
 PERIOD = 1.0 / SAMPLING_RATE
+
+# Temporary buffer to bridge the gap between the two loops
+incoming_data_queue = deque()
 
 ##DEBUG BORDERS
 #ui.add_head_html('''
@@ -49,6 +52,9 @@ serial_num=0
 last_plot_update = 0
 start_time = time.time()
 last_plot_update = 0
+line=""
+log_queue = deque() #https://www.geeksforgeeks.org/python/deque-in-python/
+filter=20000
 
 #String to Integer
 def extract_int(s):
@@ -68,7 +74,7 @@ view_fig.update_layout(
     template="plotly_white",
     margin=dict(l=50, r=20, t=50, b=50),
     xaxis=dict(title="Time [s]"),
-    yaxis=dict(title="Force [N]")
+    yaxis=dict(title="Force [mN]")
 )
 
 #Play Graph Plotly Setup
@@ -78,52 +84,63 @@ play_fig.update_layout(
     template="plotly_white",
     margin=dict(l=50, r=20, t=50, b=50),
     xaxis=dict(title="Time [s]"),
-    yaxis=dict(title="Force [N]")
+    yaxis=dict(title="Force [mN]")
 )
 
-#One function to rule them all
+#80 Hz (or as fast as ui timer allows him)
+async def read_serial_loop():
+    while True:
+        if ser and ser.is_open and ser.in_waiting:
+            try:
+                raw_line = ser.readline().decode('utf-8', errors='replace')
+                log_queue.append(raw_line)
+                clean_line = raw_line.strip()#removes white spaces
+                val = extract_int(clean_line)
+                if val is not None:
+                    try:
+                        if val>int(play_range.value):
+                            val=int(play_range.value)
+                        elif(val<-int(play_range.value)):
+                            val=-int(play_range.value)
+                    except:
+                        ui.notify(f'Error in selected range', type='negative')
+                    t_now = time.time() - start_time
+                    all_data.append((t_now, val))
+                    incoming_data_queue.append((t_now, val))
+                    
+            except Exception as e:
+                print(f"Serial Exception: {e}")
+        await asyncio.sleep(0)
 
-async def all_update():
-    global last_plot_update
-    
-    if ser and ser.is_open:
-        data = await run.io_bound(ser.read_all) 
-
-        if data:
-            raw_text = data.decode('utf-8', errors='backslashreplace')#This backslashreplace is useful to show garbage data if wrong Baudrate is selected
+#10 Hz slowww so as to not lag me up
+async def update_ui_loop():
+    while True:
+        # Process all new data that arrived since the last frame
+        while incoming_data_queue:
+            t, val = incoming_data_queue.popleft()
+            x_display.append(t)
+            y_display.append(val)
+        # Play Plot
+        if str(tabs.value) == '2' and len(x_display) > 0:
+            play_plot.figure.data[0].x = list(x_display)
+            play_plot.figure.data[0].y = list(y_display)
+            play_plot.update()
+        # Serial Monitor log
+        if str(tabs.value) == '4' and log_queue:
+            text_batch = "".join(log_queue)# Join all waiting lines into one big string
+            text_batch = text_batch.rstrip()
+            log_queue.clear() # Empty the buffer
             with log_container:
-                ui.label(raw_text).classes('font-mono leading-none p-0 m-0').style('white-space: pre-wrap')
+                #JUST One label for the whole batch to reduce lag
+                ui.label(text_batch).classes('font-mono leading-none py-0 p-0 gap-0').style('white-space: pre-wrap')
+            
             if auto_scroll.value:
                 log_container.scroll_to(percent=1.0)
+        #Prevent memory explosion/leak
+        elif str(tabs.value) != '4' and log_queue:
+            log_queue.clear()
 
-            decoded_line = raw_text.strip()
-            if decoded_line:
-                serial_num = extract_int(decoded_line)
-                
-                if serial_num is not None:
-                    #Calculate Relative Time here (so we're not stuck with billions os unix time) 
-                    relative_time = time.time() - start_time
-                    all_data.append((relative_time, serial_num))
-                    #Update sliding window with the relative time
-                    x_display.append(relative_time)
-                    y_display.append(serial_num)                    
-                    if time.time() - last_plot_update > 0.1:
-                        if str(tabs.value) == '2':  
-                            play_plot.figure.data[0].x = list(x_display)
-                            play_plot.figure.data[0].y = list(y_display)
-                            play_plot.update()
-                            last_plot_update = time.time()
-#Web Browser version        
-#def download_csv():
-#    #memory buffer for the CSV
-#    with StringIO() as buffer:
-#        writer = csv.writer(buffer)
-#        #Write the rows in the format: Index (starting at 1), Value
-#        #Ignore the timestamp stored in all_data[i][0]
-#        for i, (_, value) in enumerate(all_data, start=1):
-#            writer.writerow([i, value])            
-#        #Trigger the download in the browser
-#        ui.download(buffer.getvalue().encode('utf-8'), 'play_analysis_data.csv')
+        await asyncio.sleep(0.1)# Run at 10-20 FPS (0.1s or 0.05s)
 
 async def download_csv():
     #Generate CSV
@@ -210,11 +227,11 @@ async def handle_upload(e):
         #Extract Force from the second column
         force = df.iloc[:, 1] 
         #Create Time (Index * 1/80s)
-        time = [i * PERIOD for i in range(len(force))]
+        y_time = [i * PERIOD for i in range(len(force))]
 
         #D. Update Graph
         view_fig.data = []
-        view_fig.add_trace(go.Scatter(x=time, y=force, mode='lines', name='Force'))
+        view_fig.add_trace(go.Scatter(x=y_time, y=force, mode='lines', name='Force'))
         view_fig.update_layout(title=f"File: {filename} ({len(force)} samples)")
         view_plot.update()
         
@@ -223,7 +240,10 @@ async def handle_upload(e):
     except Exception as err:
         ui.notify(f"Error: {str(err)}", type='negative')
 
+
+
 #MENU
+
 with ui.dialog() as dialog3, ui.card():
 
     #Main title
@@ -255,12 +275,12 @@ with ui.dialog() as dialog3, ui.card():
             ui.label(' the whole graph that you recorded previously by importing a .csv.')\
                 .classes('text-lg text-gray-700 leading-relaxed inline')
 
-    #Calibration
-    with ui.card().tight().classes('w-full hover:shadow-lg transition-shadow duration-300'):
-        with ui.card_section():
-            ui.label('Calibrate').classes('text-2xl font-bold text-orange-600 mb-2')
-            ui.label('Set different weights as calibration, by default it\'s set to 500 grams.')\
-                .classes('text-lg text-gray-700 leading-relaxed')
+#    #Calibration
+#    with ui.card().tight().classes('w-full hover:shadow-lg transition-shadow duration-300'):
+#        with ui.card_section():
+#            ui.label('Calibrate').classes('text-2xl font-bold text-orange-600 mb-2')
+#            ui.label('Set different weights as calibration, by default it\'s set to 500 grams.')\
+#                .classes('text-lg text-gray-700 leading-relaxed')
 
     #Serial Monitor
     with ui.card().tight().classes('w-full hover:shadow-lg transition-shadow duration-300'):
@@ -299,15 +319,15 @@ with ui.left_drawer().classes('bg-blue-100 items-center') as left_drawer:
             with ui.row().classes('items-center'):
                 ui.icon('visibility').props('size=lg')
                 ui.label('View').classes('text-lg font-bold')
+#        with ui.tab('4', label="").classes('!justify-start'):
+#            with ui.row().classes('items-center'):
+#                ui.icon('balance').props('size=lg')
+#                ui.label('Calibrate').classes('text-lg font-bold ')
         with ui.tab('4', label="").classes('!justify-start'):
-            with ui.row().classes('items-center'):
-                ui.icon('balance').props('size=lg')
-                ui.label('Calibrate').classes('text-lg font-bold ')
-        with ui.tab('5', label="").classes('!justify-start'):
             with ui.row().classes('items-center'):
                 ui.icon('usb').props('size=lg')
                 ui.label('Serial Monitor').classes('text-lg font-bold')
-        with ui.tab('6', label="").classes('!justify-start'):
+        with ui.tab('5', label="").classes('!justify-start'):
             with ui.row().classes('items-center'):
                 ui.icon('sentiment_satisfied_alt').props('size=lg')
                 ui.label('Credits').classes('text-lg font-bold')
@@ -326,48 +346,56 @@ with ui.tab_panels(tabs, value='1').classes('w-full'):
                         ui.label(letter).classes(f'text-4xl font-bold {color_class}')
                 
                 ui.label('!').classes('text-3xl text-center')
+            
             ui.label('Start by configuring your Serial with Serial Monitor!').classes('text-xl')
             ui.label('For additional information, click the help icon (?) in the bottom-left corner of the screen').classes('text-xl ')
+            ui.image('./assets/no_background1.png').classes('w-128 h-auto mx-auto z-0')
             
                  
 
 
     with ui.tab_panel('2'):
         ui.label('Play').classes('text-5xl font-bold text-center w-full')
-        ui.label('MAKE SURE THAT THE SERIAL IS WORKING!').classes('text-xl font-bold text-center w-full text-red-600')
-        ui.button('Record into CSV', on_click=download_csv, icon='save').classes('text-xl font-bold text-center')
+        ui.label('Make sure the Serial is working!').classes('text-xl font-bold text-center w-full text-red-600')
+        with ui.row().classes('w-full items-center justify-evenly'):
+            ui.button('Record into CSV', on_click=download_csv, icon='save').classes('text-xl font-bold text-center')
+            play_range=ui.input(label='Absolute Range', placeholder='This must be a number', value=30000,
+                     validation={'Input too long': lambda value: int(value) < 100001}).classes('text-xl font-bold')
+            
+
         play_plot = ui.plotly(play_fig).classes('w-full h-[60vh]')
         #decoded_line
 
     with ui.tab_panel('3'):
         ui.label('View').classes('text-5xl font-bold text-center w-full')
         ui.label('Read from CSV to get the full graph').classes('text-xl font-bold text-center w-full')
+        ui.label('The file limit is 50 MB!').classes('text-xl font-bold text-center w-full text-red-600')
         with ui.card().classes('w-full p-4'):
             ui.upload(on_upload=handle_upload, auto_upload=True).classes('w-full mb-4')
             view_plot = ui.plotly(view_fig).classes('w-full h-96')
 
-    with ui.tab_panel('4'):
-        ui.label('Calibrate WIP').classes('text-5xl font-bold text-center w-full')
-        ui.label('Send the weight with command back to the ESP using Serial Monitor').classes('text-xl font-bold text-center w-full')
-        ui.label('After pressing a GPIO?').classes('text-xl font-bold text-center w-full')
-        ui.label('By default the weight is 500 grams').classes('font-bold text-left w-full')
-        #TODO Serial duplex communication to the ESP32 using either IDF or Arduino Framework
+#    with ui.tab_panel('4'):
+#        ui.label('Calibrate WIP').classes('text-5xl font-bold text-center w-full')
+#        ui.label('Send the weight with command back to the ESP using Serial Monitor').classes('text-xl font-bold text-center w-full')
+#        ui.label('After pressing a GPIO?').classes('text-xl font-bold text-center w-full')
+#        ui.label('By default the weight is 500 grams').classes('font-bold text-left w-full')
+#        #TODO Serial duplex communication to the ESP32 using either IDF or Arduino Framework
     
-    with ui.tab_panel('5'):
+    with ui.tab_panel('4'):
         ui.label('Serial Monitor').classes('text-5xl font-bold text-center w-full')
         ser = None
         #BAUD/PORT/CONNECT/REFRESH
         with ui.row().classes('w-full items-center'):
             baud_rates=[600,1200,2400,4800,9600,14400,19200,28800,38400,57600,115200,230400]
-            baud_selecter = ui.select(options=baud_rates, on_change=reset_connection, label='Baud Rates', value=baud_rates[10]).classes('w-50')
+            baud_selecter = ui.select(options=baud_rates, on_change=reset_connection, label='Baud Rates', value=baud_rates[10]).classes('w-50 mr-16')
             #value é o default, por isso 115200
-            port_select = ui.select(get_ports(), on_change=reset_connection, label='Select Port', value=get_ports()[0] if get_ports() else None).classes('w-50')
+            port_select = ui.select(get_ports(), on_change=reset_connection, label='Select Port', value=get_ports()[0] if get_ports() else None).classes('w-50 mr-8')
             ui.button(icon='refresh', on_click=lambda: port_select.set_options(get_ports())).props('flat round')
             connection_switch = ui.switch('Connect', on_change=toggle_connection)
     #Reminder never to confuse on_change=reset_connection with on_change=reset_connection(), as the latter forces Python to run it NOW!
         #SEND_COMMAND
         with ui.row().classes('w-full items-center'):
-            command_input = ui.input('Send command').classes('w-105')
+            command_input = ui.input('Send command').classes('w-full')
             command_input.on('keydown.enter', send_command)
             #Icons = https://fonts.google.com/icons?icon.set=Material+Icons&icon.style=Filled
 
@@ -381,18 +409,16 @@ with ui.tab_panels(tabs, value='1').classes('w-full'):
         #Instead of a simple Log use a Scroll Area for A not totally botched scroll
         log_container = ui.scroll_area().classes('w-full h-128 bg-gray-100 rounded border')
 
-    with ui.tab_panel('6'):
+    with ui.tab_panel('5'):
         ui.label('Credits').classes('text-5xl font-bold text-center w-full')
-        with ui.dialog() as dialog1, ui.card():
-            ui.label('Victor Michels')
-            ui.button('Close', on_click=dialog1.close)
-        with ui.dialog().classes('w-screen h-screen bg-black/90') as dialog2, \
-             ui.card().classes('w-full h-full bg-transparent border-none shadow-none p-4'):
-            #Close button
-            ui.button(icon='close', on_click=dialog2.close)
-            #Image container
-            with ui.column().classes('w-full h-full items-center justify-center'):
-                ui.image('./aero.jpeg').classes('max-h-[85vh] max-w-[90vw] object-contain')
+        with ui.dialog().classes('w-screen h-screen bg-black/90') as dialog1:
+            with ui.card().classes('w-full h-full bg-transparent border-none shadow-none p-4'):
+                ui.button(icon='close', on_click=dialog1.close)
+                ui.image('./assets/me_solar.jpeg')
+        with ui.dialog().classes('w-screen h-screen bg-black/90') as dialog2:
+            with ui.card().classes('w-full h-full bg-transparent border-none shadow-none p-4'):
+                ui.button(icon='close', on_click=dialog2.close)
+                ui.image('./assets/aero.jpeg').classes('max-h-[80vh] max-w-[80vw] object-contain')
 
         with ui.column().classes('items-center w-full'):
             with ui.row().classes('items-center'):
@@ -402,12 +428,14 @@ with ui.tab_panels(tabs, value='1').classes('w-full'):
                 ui.label('Based on this')
                 ui.label('fantastic').classes('font-bold italic font-[Comic_Sans_MS]')
                 ui.label('idea:')
-            ui.image('./plano.png').classes('w-full max-w-4xl h-auto mx-auto')
+            ui.image('./assets/plano.png').classes('w-full max-w-4xl h-auto mx-auto')
 
-#1/80 = 0.0125
-ui.timer(0.0125, all_update) #polling rate to run read_loop
+async def start_loops():
+    asyncio.create_task(read_serial_loop())
+    asyncio.create_task(update_ui_loop())
 
-#ui.run(title="ToqueWizard")
+# Run 'start_loops' exactly once, 0 seconds after the UI loads
+ui.timer(0, start_loops, once=True)
 
 if __name__ in {"__main__", "__mp_main__"}:
     app.native.window_args['maximized'] = True
