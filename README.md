@@ -57,6 +57,6 @@ A fully functional serial debugger is built-in.
 
 ##  How to Run
 
-### 🐧 Option 1: Linux Standalone App (.AppImage )
-### 🪟 Option 2: Windows Standalone App (.exe  )
-### 🖥️ Option 3: Just execute nice.py   
+### 🐧 Option 1: Download from Releases the Linux Standalone App (.AppImage)
+### 🪟 Option 2: Download from Releases the Windows Executable (.exe)
+### 🖥️ Option 3: Just run nice.py yourself
